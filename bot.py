@@ -59,7 +59,9 @@ if BOTAN_TOKEN:
 
 help_text = "Check if a Telegram Account is a registered scammer.\n\n" \
             "<b>Usage:</b>\n" \
-            "Forward a message of the User you want to check to this bot."
+            "Forward a message of the User you want to check to this bot or " \
+            "use the /search command to search the database for different " \
+            "criteria."
 
 admin_help_text = "\n\n" \
                   "<b>Admin commands:</b>\n" \
@@ -82,7 +84,7 @@ def help(bot, update):
     from_user = update.message.from_user
     chat_id = update.message.chat_id
 
-    is_admin, admin = get_admin(from_user)
+    admin = get_admin(from_user)
 
     text = help_text
 
