@@ -101,7 +101,7 @@ def help(bot, update):
 
 @db_session
 def get_admin(from_user):
-    admin = get(a for a in Admin if a.id is from_user.id)
+    admin = Admin.get(id=from_user.id)
     if admin:
         admin.first_name = from_user.first_name
         admin.last_name = from_user.last_name
@@ -111,17 +111,12 @@ def get_admin(from_user):
 
 @db_session
 def get_scammer(from_user):
-    scammer = get(s for s in Scammer if s.id is from_user.id)
+    scammer = Scammer.get(id=from_user.id)
     if scammer:
         scammer.first_name = from_user.first_name
         scammer.last_name = from_user.last_name
         scammer.username = from_user.username
     return scammer
-
-
-@db_session
-def get_scammer_by_id(id):
-    return get(s for s in Scammer if s.id is id)
 
 
 def message_handler(bot, update):
@@ -146,7 +141,9 @@ def message_handler(bot, update):
                     scammer = Scammer(id=forward_from.id,
                                       first_name=forward_from.first_name,
                                       last_name=forward_from.last_name,
-                                      username=forward_from.username)
+                                      username=forward_from.username,
+                                      added_by=
+                                      get_admin(update.message.from_user))
                 reply = "Successfully added scammer"
             else:
                 reply = "Scammer was already added"
@@ -195,7 +192,7 @@ def message_handler(bot, update):
                 state[chat_id] = chat_state
                 reply = "Please enter " + update.message.text
             elif chat_state[0] is ADD_INFO:
-                scammer = get_scammer_by_id(chat_state[1])
+                scammer = Scammer.get(id=chat_state[1])
                 if chat_state[2] is PHONE_NR:
                     scammer.phone_nr = text
                 elif chat_state[2] is ACCOUNT_NR:

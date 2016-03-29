@@ -13,6 +13,7 @@ class Scammer(db.Entity):
     account_nr = Optional(str)
     bank_name = Optional(str)
     remark = Optional(str)
+    added_by = Required("Admin")
     created = Required(datetime.datetime, default=datetime.datetime.now)
 
     def __str__(self):
@@ -24,14 +25,16 @@ class Scammer(db.Entity):
             "Phone Nr.: {phone_nr}\n" \
             "Bank Account Nr.: {account_nr}\n" \
             "Bank Account Name: {bank_name}\n" \
-            "Admin remark: {remark}".format(
+            "Admin remark: {remark}\n" \
+            "Added by: {added_by}".format(
                 first_name=self.first_name,
                 last_name=self.last_name,
                 username=self.username,
                 phone_nr=self.phone_nr,
                 account_nr=self.account_nr,
                 bank_name=self.bank_name,
-                remark=self.remark
+                remark=self.remark,
+                added_by=str(self.added_by)
             )
 
         return s
