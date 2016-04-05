@@ -4,13 +4,12 @@ from pony.orm import *
 from database import db
 
 
-class Admin(db.Entity):
+class Reporter(db.Entity):
     id = PrimaryKey(int, auto=False)
     first_name = Required(str)
     last_name = Optional(str)
     username = Optional(str)
-    added = Set("Scammer")
-    super_admin = Optional(bool, default=False)
+    reported = Set("Scammer")
     created = Required(datetime.datetime, default=datetime.datetime.now)
 
     def __str__(self):
@@ -22,3 +21,6 @@ class Admin(db.Entity):
             s += " (@%s)" % self.username
 
         return s
+
+    def __repr__(self):
+        return str(self)

@@ -1,9 +1,13 @@
 import logging
+from datetime import datetime
+from io import BytesIO, BufferedReader
 
 from telegram.ext import Updater
-from telegram import ParseMode, ReplyKeyboardMarkup, ReplyKeyboardHide
+from telegram.ext.dispatcher import run_async
+from telegram import ParseMode, ReplyKeyboardMarkup, ReplyKeyboardHide, \
+    ChatAction
 from telegram.utils.botan import Botan
-from pony.orm import db_session, select, get
+from pony.orm import db_session, select
 
 from credentials import TOKEN, BOTAN_TOKEN
 from start_bot import start_bot
@@ -11,10 +15,11 @@ from database import db
 
 from admin import Admin
 from scammer import Scammer
+from reporter import Reporter
 
 # States the bot can have (maintained per chat id)
 MAIN, ADD_SCAMMER, REMOVE_SCAMMER, ADD_ADMIN, REMOVE_ADMIN, PHONE_NR,\
-    ACCOUNT_NR, BANK_NAME, REMARK, SEARCH, ADD_INFO = range(11)
+    ACCOUNT_NR, BANK_NAME, REMARK, SEARCH, ADD_INFO, EDIT = range(12)
 
 options = {PHONE_NR: "Phone number", ACCOUNT_NR: "Account number",
            BANK_NAME: "Name of bank account owner", REMARK: "Admin remark"}
@@ -30,8 +35,10 @@ _grid = [[options[ACCOUNT_NR]],
          ['/cancel']]
 
 CAT_KEYBOARD = ReplyKeyboardMarkup(_grid, selective=True)
+DB_NAME = 'bot.sqlite'
 
 state = dict()
+last_search_query = dict()
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -41,7 +48,7 @@ logger = logging.getLogger(__name__)
 u = Updater(TOKEN)
 dp = u.dispatcher
 
-db.bind('sqlite', 'bot.sqlite', create_db=True)
+db.bind('sqlite', DB_NAME, create_db=True)
 db.generate_mapping(create_tables=True)
 
 with db_session:
@@ -57,21 +64,23 @@ botan = False
 if BOTAN_TOKEN:
     botan = Botan(BOTAN_TOKEN)
 
-help_text = "Check if a Telegram Account is a registered scammer.\n\n" \
+help_text = "This bot keeps a database of known scammers by recording their " \
+            "phone number, bank account number and name.\n\n" \
             "<b>Usage:</b>\n" \
-            "Forward a message of the User you want to check to this bot or " \
-            "use the /search command to search the database for different " \
-            "criteria."
+            "/search - Search the database for reports"
 
 admin_help_text = "\n\n" \
                   "<b>Admin commands:</b>\n" \
-                  "/add - Register a new account as a scammer\n" \
-                  "/remove - Remove a registered scammer from the database\n" \
+                  "/new - Add a new scammer report\n" \
+                  "/edit - Edit an existing report\n" \
+                  "/delete - Delete a scammer report\n" \
                   "/cancel - Cancel current operation"
+
 super_admin_help_text = "\n\n" \
                         "<b>Super Admin commands:</b>\n" \
                         "/add_admin - Register a new admin\n" \
-                        "/remove_admin - Remove an admin"
+                        "/remove_admin - Remove an admin\n" \
+                        "/download_database - Download complete database"
 
 
 def error(bot, update, error):
@@ -84,7 +93,8 @@ def help(bot, update):
     from_user = update.message.from_user
     chat_id = update.message.chat_id
 
-    admin = get_admin(from_user)
+    with db_session:
+        admin = get_admin(from_user)
 
     text = help_text
 
@@ -99,7 +109,6 @@ def help(bot, update):
                     disable_web_page_preview=True)
 
 
-@db_session
 def get_admin(from_user):
     admin = Admin.get(id=from_user.id)
     if admin:
@@ -109,14 +118,13 @@ def get_admin(from_user):
     return admin
 
 
-@db_session
-def get_scammer(from_user):
-    scammer = Scammer.get(id=from_user.id)
-    if scammer:
-        scammer.first_name = from_user.first_name
-        scammer.last_name = from_user.last_name
-        scammer.username = from_user.username
-    return scammer
+def get_reporter(from_user):
+    reporter = Reporter.get(id=from_user.id)
+    if reporter:
+        reporter.first_name = from_user.first_name
+        reporter.last_name = from_user.last_name
+        reporter.username = from_user.username
+    return reporter
 
 
 def message_handler(bot, update):
@@ -127,111 +135,130 @@ def message_handler(bot, update):
     reply = None
     reply_markup = ReplyKeyboardHide(selective=True)
 
-    if forward_from:
-        if chat_state is MAIN:
-            scammer = get_scammer(forward_from)
-            if scammer:
-                reply = "This user has been registered as a scammer"
-            else:
-                reply = "This user has <b>not</b> been registered as a scammer"
-        elif chat_state is ADD_SCAMMER:
-            scammer = get_scammer(forward_from)
-            if not scammer:
-                with db_session:
-                    scammer = Scammer(id=forward_from.id,
-                                      first_name=forward_from.first_name,
-                                      last_name=forward_from.last_name,
-                                      username=forward_from.username,
-                                      added_by=
-                                      get_admin(update.message.from_user))
-                reply = "Successfully added scammer"
-            else:
-                reply = "Scammer was already added"
+    with db_session:
+        if chat_state is ADD_SCAMMER and forward_from:
+            reporter = get_reporter(forward_from)
+            if not reporter:
+                reporter = Reporter(id=forward_from.id,
+                                    first_name=forward_from.first_name,
+                                    last_name=forward_from.last_name,
+                                    username=forward_from.username)
+                track(update, 'new_reporter')
 
-            reply += "\n\n%s\n\nAdd additional info?" % str(scammer)
+            scammer = Scammer(reported_by=reporter,
+                              added_by=get_admin(update.message.from_user))
+            track(update, 'new_report')
+            db.commit()
+
+            reply = "Created report <b>#%d</b>! Please enter scammer " \
+                    "information:" % scammer.id
             reply_markup = CAT_KEYBOARD
             state[chat_id] = [ADD_INFO, scammer.id]
+
+        elif chat_state is EDIT:
+            try:
+                report_id = int(update.message.text.replace('#', ''))
+            except ValueError:
+                reply = "Not a valid report number. Try again or use " \
+                        "/cancel to abort."
+            else:
+                scammer = Scammer.get(id=report_id)
+
+                if scammer:
+                    reply = "%s\n\nPlease enter new " \
+                            "scammer information:" % str(scammer)
+                    reply_markup = CAT_KEYBOARD
+                    state[chat_id] = [ADD_INFO, scammer.id]
+                else:
+                    reply = "Could not find report number. Try again or " \
+                            "use /cancel to abort."
+
         elif chat_state is REMOVE_SCAMMER:
-            state[chat_id] = MAIN
-            with db_session:
-                scammer = get_scammer(forward_from)
+            try:
+                report_id = int(update.message.text.replace('#', ''))
+            except ValueError:
+                reply = "Not a valid report number. Try again or use " \
+                        "/cancel to abort."
+            else:
+                scammer = Scammer.get(id=report_id)
                 if scammer:
                     scammer.delete()
-                    reply = "Successfully removed scammer"
+                    reply = "Deleted report!"
+                    del state[chat_id]
                 else:
-                    reply = "This user is not a registered scammer"
-        elif chat_state is ADD_ADMIN:
-            state[chat_id] = MAIN
+                    reply = "Could not find report number. Try again or " \
+                            "use /cancel to abort."
+
+        elif chat_state is ADD_ADMIN and forward_from:
             admin = get_admin(forward_from)
             if not admin:
-                with db_session:
-                    Admin(id=forward_from.id,
-                          first_name=forward_from.first_name,
-                          last_name=forward_from.last_name,
-                          username=forward_from.username)
+                Admin(id=forward_from.id,
+                      first_name=forward_from.first_name,
+                      last_name=forward_from.last_name,
+                      username=forward_from.username)
                 reply = "Successfully added admin"
             else:
                 reply = "This user is already an admin"
-        elif chat_state is REMOVE_ADMIN:
-            state[chat_id] = MAIN
-            with db_session:
-                admin = get_admin(forward_from)
-                if admin and not admin.super_admin:
-                    admin.delete()
-                    reply = "Successfully removed admin"
-                else:
-                    reply = "This user is not an admin"
-    elif isinstance(chat_state, list):  # Search or additional info
-        with db_session:
+
+            del state[chat_id]
+
+        elif chat_state is REMOVE_ADMIN and forward_from:
+            admin = get_admin(forward_from)
+            if admin and not admin.super_admin:
+                admin.delete()
+                reply = "Successfully removed admin"
+            else:
+                reply = "This user is not an admin"
+
+            del state[chat_id]
+
+        elif chat_state is SEARCH:
+            text = update.message.text
+            scammers = select(s for s in Scammer if
+                              text in s.phone_nr or
+                              text in s.account_nr or
+                              text in s.bank_name or
+                              text in s.remark).limit(11)
+
+            if scammers:
+                reply = "Search results: \n\n" + \
+                        "\n\n".join(str(s) for s in scammers[:10])
+            else:
+                reply = "No search results"
+
+            if len(scammers) > 10:
+                reply += "\n\n" \
+                         "There were more than 10 results. " \
+                         "Use /all to download a list of the first max. 100 " \
+                         "results."
+                last_search_query[chat_id] = (text, datetime.now())
+
+            del state[chat_id]
+            track(update, 'search')
+
+        elif isinstance(chat_state, list):  # Additional info
             text = update.message.text
 
-            if chat_state[0] is ADD_INFO and len(chat_state) is 2 or \
-               chat_state[0] is SEARCH and len(chat_state) is 1:
+            if chat_state[0] is ADD_INFO and len(chat_state) is 2:
                 option = options[text]
                 chat_state.append(option)
                 state[chat_id] = chat_state
                 reply = "Please enter " + update.message.text
             elif chat_state[0] is ADD_INFO:
                 scammer = Scammer.get(id=chat_state[1])
-                if chat_state[2] is PHONE_NR:
+                category = chat_state[2]
+                if category is PHONE_NR:
                     scammer.phone_nr = text
-                elif chat_state[2] is ACCOUNT_NR:
+                elif category is ACCOUNT_NR:
                     scammer.account_nr = text
-                elif chat_state[2] is BANK_NAME:
+                elif category is BANK_NAME:
                     scammer.bank_name = text
-                elif chat_state[2] is REMARK:
+                elif category is REMARK:
                     scammer.remark = text
                 chat_state.pop()  # one menu back
                 state[chat_id] = chat_state
                 reply_markup = CAT_KEYBOARD
-                reply = "Add more additional info?"
-            elif chat_state[0] is SEARCH:
-                scammers = None
-                if chat_state[1] is PHONE_NR:
-                    scammers = select(s for s in Scammer if
-                                      # s.phone_nr in text or
-                                      text in s.phone_nr).limit(10)
-                elif chat_state[1] is ACCOUNT_NR:
-                    scammers = select(s for s in Scammer if
-                                      # s.account_nr in text or
-                                      text in s.account_nr).limit(10)
-                elif chat_state[1] is BANK_NAME:
-                    scammers = select(s for s in Scammer if
-                                      # s.bank_name in text or
-                                      text in s.bank_name).limit(10)
-                elif chat_state[1] is REMARK:
-                    scammers = select(s for s in Scammer if
-                                      # s.remark in text or
-                                      text in s.remark).limit(10)
-
-                if scammers:
-                    reply = "Search results (max. 10 results): \n\n" + \
-                            "\n\n---\n\n".join(str(s) for s in scammers)
-                else:
-                    reply = "No search results"
-
-                chat_state = MAIN
-                state[chat_id] = chat_state
+                reply = "Add more info or send /cancel if you're done."
 
     if reply:
         bot.sendMessage(chat_id, text=reply, parse_mode=ParseMode.HTML,
@@ -239,31 +266,52 @@ def message_handler(bot, update):
                         reply_markup=reply_markup)
 
 
+@run_async
+def track(update, event_name):
+    if botan:
+        botan.track(message=update.message, event_name=event_name)
+
+
 def add_scammer(bot, update):
     global state
-    admin = get_admin(update.message.from_user)
+    with db_session:
+        admin = get_admin(update.message.from_user)
     if not admin:
         return
     state[update.message.chat_id] = ADD_SCAMMER
     bot.sendMessage(update.message.chat_id,
-                    text="Forward me a message of the scammer you want to add"
-                         " or send /cancel to cancel")
+                    text="Forward me a message of the user that is reporting "
+                         "the scammer or use /cancel to cancel")
 
 
 def remove_scammer(bot, update):
     global state
-    admin = get_admin(update.message.from_user)
+    with db_session:
+        admin = get_admin(update.message.from_user)
     if not admin:
         return
     state[update.message.chat_id] = REMOVE_SCAMMER
     bot.sendMessage(update.message.chat_id,
-                    text="Forward me a message of the user you want to remove"
-                         " or send /cancel to cancel")
+                    text="Please send the Report # of the report you wish "
+                         "to remove or send /cancel to cancel")
+
+
+def edit_scammer(bot, update):
+    global state
+    with db_session:
+        admin = get_admin(update.message.from_user)
+    if not admin:
+        return
+    state[update.message.chat_id] = EDIT
+    bot.sendMessage(update.message.chat_id,
+                    text="Please send the Report # of the report you wish "
+                         "to edit or send /cancel to cancel")
 
 
 def add_admin(bot, update):
     global state
-    admin = get_admin(update.message.from_user)
+    with db_session:
+        admin = get_admin(update.message.from_user)
     if not admin or not admin.super_admin:
         return
     state[update.message.chat_id] = ADD_ADMIN
@@ -274,7 +322,8 @@ def add_admin(bot, update):
 
 def remove_admin(bot, update):
     global state
-    admin = get_admin(update.message.from_user)
+    with db_session:
+        admin = get_admin(update.message.from_user)
     if not admin or not admin.super_admin:
         return
     state[update.message.chat_id] = REMOVE_ADMIN
@@ -284,31 +333,70 @@ def remove_admin(bot, update):
 
 
 def cancel(bot, update):
-    global state
-    admin = get_admin(update.message.from_user)
-    if not admin:
-        return
-    state[update.message.chat_id] = MAIN
-    bot.sendMessage(update.message.chat_id,
-                    text="Current operation canceled",
-                    reply_markup=ReplyKeyboardHide())
+    try:
+        del state[update.message.chat_id]
+    finally:
+        bot.sendMessage(update.message.chat_id,
+                        text="Current operation canceled",
+                        reply_markup=ReplyKeyboardHide())
 
 
 def search(bot, update):
     global state
-    state[update.message.chat_id] = [SEARCH]
+    state[update.message.chat_id] = SEARCH
     bot.sendMessage(update.message.chat_id,
-                    text="Choose search category",
-                    reply_markup=CAT_KEYBOARD)
+                    text="Enter search query:")
+
+
+def download_all(bot, update):
+    global last_search_query
+    chat_id = update.message.chat_id
+    query_tuple = last_search_query.get(update.message.chat_id, None)
+    if not query_tuple:
+        bot.sendMessage(update.message.chat_id,
+                        text="Sorry, results are only preserved for 15 "
+                             "minutes. Please use /search to start a new "
+                             "search.")
+    else:
+        bot.sendChatAction(chat_id, action=ChatAction.UPLOAD_DOCUMENT)
+        query = query_tuple[0]
+        with db_session:
+            scammers = select(s for s in Scammer if
+                              query in s.phone_nr or
+                              query in s.account_nr or
+                              query in s.bank_name or
+                              query in s.remark).limit(100)
+
+            content = "\r\n\r\n".join(str(s) for s in scammers)
+
+        file = BytesIO(content.encode())
+        bot.sendDocument(chat_id, document=BufferedReader(file),
+                         filename='search.txt')
+
+
+def download_db(bot, update):
+    chat_id = update.message.chat_id
+    global state
+    with db_session:
+        admin = get_admin(update.message.from_user)
+    if not admin or not admin.super_admin:
+        return
+    bot.sendChatAction(chat_id, action=ChatAction.UPLOAD_DOCUMENT)
+    bot.sendDocument(chat_id, document=open(DB_NAME, 'rb'),
+                     filename='scammers.sqlite')
+
 
 # Add all handlers to the dispatcher and run the bot
 dp.addTelegramCommandHandler('start', help)
 dp.addTelegramCommandHandler('help', help)
 dp.addTelegramCommandHandler('add_admin', add_admin)
 dp.addTelegramCommandHandler('remove_admin', remove_admin)
-dp.addTelegramCommandHandler('add', add_scammer)
-dp.addTelegramCommandHandler('remove', remove_scammer)
+dp.addTelegramCommandHandler('new', add_scammer)
+dp.addTelegramCommandHandler('edit', edit_scammer)
+dp.addTelegramCommandHandler('delete', remove_scammer)
 dp.addTelegramCommandHandler('search', search)
+dp.addTelegramCommandHandler('all', download_all)
+dp.addTelegramCommandHandler('download_database', download_db)
 dp.addTelegramCommandHandler('cancel', cancel)
 dp.addTelegramMessageHandler(message_handler)
 dp.addErrorHandler(error)
