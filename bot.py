@@ -67,7 +67,8 @@ if BOTAN_TOKEN:
 help_text = "This bot keeps a database of known scammers by recording their " \
             "phone number, bank account number and name.\n\n" \
             "<b>Usage:</b>\n" \
-            "/search - Search the database for reports"
+            "/search - Search the database for reports\n\n" \
+            "Donations via BTC are welcome: 1EPu17mBM2zw4LcupURgwsAuFeKQrTa1jy"
 
 admin_help_text = "\n\n" \
                   "<b>Admin commands:</b>\n" \
