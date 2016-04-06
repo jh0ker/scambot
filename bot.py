@@ -145,8 +145,8 @@ def message_handler(bot, update):
                                     username=forward_from.username)
                 track(update, 'new_reporter')
 
-            scammer = Scammer(reported_by=reporter,
-                              added_by=get_admin(update.message.from_user))
+            scammer = Scammer(added_by=get_admin(update.message.from_user))
+            scammer.reported_by.add(reporter)
             track(update, 'new_report')
             db.commit()
 
@@ -308,6 +308,33 @@ def edit_scammer(bot, update):
                          "to edit or send /cancel to cancel")
 
 
+def confirm_scammer(bot, update, groupdict):
+    chat_id = update.message.chat_id
+    scammer_id = int(groupdict['scammer'])
+    from_user = update.message.from_user
+
+    with db_session:
+        scammer = Scammer.get(id=scammer_id)
+
+        if not scammer:
+            reply = "Report not found!"
+
+        else:
+            reporter = get_reporter(from_user)
+
+            if not reporter:
+                reporter = Reporter(id=from_user.id,
+                                    first_name=from_user.first_name,
+                                    last_name=from_user.last_name,
+                                    username=from_user.username)
+                track(update, 'new_reporter')
+
+            scammer.reported_by.add(reporter)
+            reply = "Report confirmed!"
+
+    bot.sendMessage(chat_id, text=reply)
+
+
 def add_admin(bot, update):
     global state
     with db_session:
@@ -398,6 +425,7 @@ dp.addTelegramCommandHandler('search', search)
 dp.addTelegramCommandHandler('all', download_all)
 dp.addTelegramCommandHandler('download_database', download_db)
 dp.addTelegramCommandHandler('cancel', cancel)
+dp.addTelegramRegexHandler(r'^/confirm_(?P<scammer>\d+)$', confirm_scammer)
 dp.addTelegramMessageHandler(message_handler)
 dp.addErrorHandler(error)
 
