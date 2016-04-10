@@ -5,7 +5,7 @@ from io import BytesIO, BufferedReader
 from telegram.ext import Updater
 from telegram.ext.dispatcher import run_async
 from telegram import ParseMode, ReplyKeyboardMarkup, ReplyKeyboardHide, \
-    ChatAction
+    ChatAction, ForceReply
 from telegram.utils.botan import Botan
 from pony.orm import db_session, select
 
@@ -107,6 +107,7 @@ def help(bot, update):
     bot.sendMessage(chat_id,
                     text=text,
                     parse_mode=ParseMode.HTML,
+                    reply_markup=ForceReply(),
                     disable_web_page_preview=True)
 
 
@@ -189,6 +190,7 @@ def message_handler(bot, update):
                 else:
                     reply = "Could not find report number. Try again or " \
                             "use /cancel to abort."
+                    reply_markup = ForceReply()
 
         elif chat_state is ADD_ADMIN and forward_from:
             admin = get_admin(forward_from)
@@ -245,8 +247,10 @@ def message_handler(bot, update):
                 chat_state.append(option)
                 state[chat_id] = chat_state
                 reply = "Please enter " + update.message.text
-            elif chat_state[0] is ADD_INFO:
+                reply_markup = ForceReply()
+        elif chat_state[0] is ADD_INFO:
                 scammer = Scammer.get(id=chat_state[1])
+                text = update.message.text
                 category = chat_state[2]
                 if category is PHONE_NR:
                     scammer.phone_nr = text
@@ -294,7 +298,8 @@ def remove_scammer(bot, update):
     state[update.message.chat_id] = REMOVE_SCAMMER
     bot.sendMessage(update.message.chat_id,
                     text="Please send the Report # of the report you wish "
-                         "to remove or send /cancel to cancel")
+                         "to remove or send /cancel to cancel",
+                    reply_markup=ForceReply())
 
 
 def edit_scammer(bot, update):
@@ -306,7 +311,8 @@ def edit_scammer(bot, update):
     state[update.message.chat_id] = EDIT
     bot.sendMessage(update.message.chat_id,
                     text="Please send the Report # of the report you wish "
-                         "to edit or send /cancel to cancel")
+                         "to edit or send /cancel to cancel",
+                    reply_markup=ForceReply())
 
 
 def confirm_scammer(bot, update, groupdict):
@@ -373,7 +379,8 @@ def search(bot, update):
     global state
     state[update.message.chat_id] = SEARCH
     bot.sendMessage(update.message.chat_id,
-                    text="Enter search query:")
+                    text="Enter search query:",
+                    reply_markup=ForceReply())
 
 
 def download_all(bot, update):
