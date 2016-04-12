@@ -1,4 +1,5 @@
 import datetime
+from html import escape as escape_html
 
 from pony.orm import *
 from database import db
@@ -21,6 +22,16 @@ class Scammer(db.Entity):
                 if reported_count > 3
                 else '')
 
+        params = {
+            'id': self.id,
+            'phone_nr': self.phone_nr,
+            'account_nr': self.account_nr,
+            'bank_name': self.bank_name,
+            'remark': self.remark,
+            'reported_by': reported_list,
+            'added_by': self.added_by
+        }
+
         s = "<b>Report #{id}</b>\n" \
             "Phone Nr.: {phone_nr}\n" \
             "Bank Account Nr.: {account_nr}\n" \
@@ -29,14 +40,10 @@ class Scammer(db.Entity):
             "Reported by: {reported_by}\n" \
             "Added by: {added_by}\n" \
             "Confirm report: /confirm_{id}".format(
-                id=self.id,
-                phone_nr=self.phone_nr,
-                account_nr=self.account_nr,
-                bank_name=self.bank_name,
-                remark=self.remark,
-                reported_by=reported_list,
-                added_by=str(self.added_by)
-        )
+                **{k: escape_html(str(v)) for (k, v) in params.items()}
+            )
+
+        print(s)
 
         return s
 
