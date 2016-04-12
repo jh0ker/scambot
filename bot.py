@@ -107,7 +107,6 @@ def help(bot, update):
     bot.sendMessage(chat_id,
                     text=text,
                     parse_mode=ParseMode.HTML,
-                    reply_markup=ForceReply(),
                     disable_web_page_preview=True)
 
 
@@ -248,22 +247,22 @@ def message_handler(bot, update):
                 state[chat_id] = chat_state
                 reply = "Please enter " + update.message.text
                 reply_markup = ForceReply()
-        elif chat_state[0] is ADD_INFO:
-                scammer = Scammer.get(id=chat_state[1])
-                text = update.message.text
-                category = chat_state[2]
-                if category is PHONE_NR:
-                    scammer.phone_nr = text
-                elif category is ACCOUNT_NR:
-                    scammer.account_nr = text
-                elif category is BANK_NAME:
-                    scammer.bank_name = text
-                elif category is REMARK:
-                    scammer.remark = text
-                chat_state.pop()  # one menu back
-                state[chat_id] = chat_state
-                reply_markup = CAT_KEYBOARD
-                reply = "Add more info or send /cancel if you're done."
+            elif chat_state[0] is ADD_INFO:
+                    scammer = Scammer.get(id=chat_state[1])
+                    text = update.message.text
+                    category = chat_state[2]
+                    if category is PHONE_NR:
+                        scammer.phone_nr = text
+                    elif category is ACCOUNT_NR:
+                        scammer.account_nr = text
+                    elif category is BANK_NAME:
+                        scammer.bank_name = text
+                    elif category is REMARK:
+                        scammer.remark = text
+                    chat_state.pop()  # one menu back
+                    state[chat_id] = chat_state
+                    reply_markup = CAT_KEYBOARD
+                    reply = "Add more info or send /cancel if you're done."
 
     if reply:
         bot.sendMessage(chat_id, text=reply, parse_mode=ParseMode.HTML,
