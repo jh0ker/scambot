@@ -189,7 +189,7 @@ def message_handler(bot, update):
                 else:
                     reply = "Could not find report number. Try again or " \
                             "use /cancel to abort."
-                    reply_markup = ForceReply()
+                    reply_markup = ForceReply(selective=True)
 
         elif chat_state is ADD_ADMIN and forward_from:
             admin = get_admin(forward_from)
@@ -246,7 +246,7 @@ def message_handler(bot, update):
                 chat_state.append(option)
                 state[chat_id] = chat_state
                 reply = "Please enter " + update.message.text
-                reply_markup = ForceReply()
+                reply_markup = ForceReply(selective=True)
             elif chat_state[0] is ADD_INFO:
                     scammer = Scammer.get(id=chat_state[1])
                     text = update.message.text
@@ -285,7 +285,8 @@ def add_scammer(bot, update):
     state[update.message.chat_id] = ADD_SCAMMER
     bot.sendMessage(update.message.chat_id,
                     text="Forward me a message of the user that is reporting "
-                         "the scammer or use /cancel to cancel")
+                         "the scammer or use /cancel to cancel",
+                    reply_to_message_id=update.message.message_id)
 
 
 def remove_scammer(bot, update):
@@ -298,7 +299,8 @@ def remove_scammer(bot, update):
     bot.sendMessage(update.message.chat_id,
                     text="Please send the Report # of the report you wish "
                          "to remove or send /cancel to cancel",
-                    reply_markup=ForceReply())
+                    reply_markup=ForceReply(selective=True),
+                    reply_to_message_id=update.message.message_id)
 
 
 def edit_scammer(bot, update):
@@ -311,7 +313,8 @@ def edit_scammer(bot, update):
     bot.sendMessage(update.message.chat_id,
                     text="Please send the Report # of the report you wish "
                          "to edit or send /cancel to cancel",
-                    reply_markup=ForceReply())
+                    reply_markup=ForceReply(selective=True),
+                    reply_to_message_id=update.message.message_id)
 
 
 def confirm_scammer(bot, update, groupdict):
@@ -338,7 +341,8 @@ def confirm_scammer(bot, update, groupdict):
             scammer.reported_by.add(reporter)
             reply = "Report confirmed!"
 
-    bot.sendMessage(chat_id, text=reply)
+    bot.sendMessage(chat_id, text=reply,
+                    reply_to_message_id=update.message.message_id)
 
 
 def add_admin(bot, update):
@@ -350,7 +354,8 @@ def add_admin(bot, update):
     state[update.message.chat_id] = ADD_ADMIN
     bot.sendMessage(update.message.chat_id,
                     text="Forward me a message of the user you want to add"
-                         " as admin or send /cancel to cancel")
+                         " as admin or send /cancel to cancel",
+                    reply_to_message_id=update.message.message_id)
 
 
 def remove_admin(bot, update):
@@ -362,7 +367,8 @@ def remove_admin(bot, update):
     state[update.message.chat_id] = REMOVE_ADMIN
     bot.sendMessage(update.message.chat_id,
                     text="Forward me a message of the admin you want to remove"
-                         " or send /cancel to cancel")
+                         " or send /cancel to cancel",
+                    reply_to_message_id=update.message.message_id)
 
 
 def cancel(bot, update):
@@ -371,7 +377,8 @@ def cancel(bot, update):
     finally:
         bot.sendMessage(update.message.chat_id,
                         text="Current operation canceled",
-                        reply_markup=ReplyKeyboardHide())
+                        reply_markup=ReplyKeyboardHide(),
+                        reply_to_message_id=update.message.message_id)
 
 
 def search(bot, update):
@@ -379,7 +386,8 @@ def search(bot, update):
     state[update.message.chat_id] = SEARCH
     bot.sendMessage(update.message.chat_id,
                     text="Enter search query:",
-                    reply_markup=ForceReply())
+                    reply_markup=ForceReply(selective=True),
+                    reply_to_message_id=update.message.message_id)
 
 
 def download_all(bot, update):
@@ -390,7 +398,8 @@ def download_all(bot, update):
         bot.sendMessage(update.message.chat_id,
                         text="Sorry, results are only preserved for 15 "
                              "minutes. Please use /search to start a new "
-                             "search.")
+                             "search.",
+                             reply_to_message_id=update.message.message_id)
     else:
         bot.sendChatAction(chat_id, action=ChatAction.UPLOAD_DOCUMENT)
         query = query_tuple[0]
@@ -405,7 +414,8 @@ def download_all(bot, update):
 
         file = BytesIO(content.encode())
         bot.sendDocument(chat_id, document=BufferedReader(file),
-                         filename='search.txt')
+                         filename='search.txt',
+                         reply_to_message_id=update.message.message_id)
 
 
 def download_db(bot, update):
@@ -417,7 +427,8 @@ def download_db(bot, update):
         return
     bot.sendChatAction(chat_id, action=ChatAction.UPLOAD_DOCUMENT)
     bot.sendDocument(chat_id, document=open(DB_NAME, 'rb'),
-                     filename='scammers.sqlite')
+                     filename='scammers.sqlite',
+                     reply_to_message_id=update.message.message_id)
 
 
 # Add all handlers to the dispatcher and run the bot
