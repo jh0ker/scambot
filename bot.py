@@ -443,7 +443,8 @@ dp.addTelegramCommandHandler('search', search)
 dp.addTelegramCommandHandler('all', download_all)
 dp.addTelegramCommandHandler('download_database', download_db)
 dp.addTelegramCommandHandler('cancel', cancel)
-dp.addTelegramRegexHandler(r'^/confirm_(?P<scammer>\d+)$', confirm_scammer)
+dp.addTelegramRegexHandler(r'^/confirm_(?P<scammer>\d+)(@.*)?$',
+                           confirm_scammer)
 dp.addTelegramMessageHandler(message_handler)
 dp.addErrorHandler(error)
 
