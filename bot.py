@@ -2,7 +2,8 @@ import logging
 from datetime import datetime
 from io import BytesIO, BufferedReader
 
-from telegram.ext import Updater
+from telegram.ext import Updater, CommandHandler, RegexHandler, \
+    MessageHandler, Filters
 from telegram.ext.dispatcher import run_async
 from telegram import ParseMode, ReplyKeyboardMarkup, ReplyKeyboardHide, \
     ChatAction, ForceReply
@@ -214,29 +215,36 @@ def message_handler(bot, update):
 
             del state[chat_id]
 
-        elif chat_state is SEARCH:
-            text = update.message.text
-            scammers = select(s for s in Scammer if
-                              text in s.phone_nr or
-                              text in s.account_nr or
-                              text in s.bank_name or
-                              text in s.remark).limit(11)
+        elif isinstance(chat_state, tuple) and chat_state[0] is SEARCH:
 
-            if scammers:
-                reply = "Search results: \n\n" + \
-                        "\n\n".join(str(s) for s in scammers[:10])
+            issued = chat_state[1]
+            if (datetime.now() - issued).seconds > 30:
+                reply = "Please send your /search query within 30 seconds."
+                del state[chat_id]
+
             else:
-                reply = "No search results"
+                text = update.message.text
+                scammers = select(s for s in Scammer if
+                                  text in s.phone_nr or
+                                  text in s.account_nr or
+                                  text in s.bank_name or
+                                  text in s.remark).limit(11)
 
-            if len(scammers) > 10:
-                reply += "\n\n" \
-                         "There were more than 10 results. " \
-                         "Use /all to download a list of the first max. 100 " \
-                         "results."
-                last_search_query[chat_id] = (text, datetime.now())
+                if scammers:
+                    reply = "Search results: \n\n" + \
+                            "\n\n".join(str(s) for s in scammers[:10])
+                else:
+                    reply = "No search results"
 
-            del state[chat_id]
-            track(update, 'search')
+                if len(scammers) > 10:
+                    reply += "\n\n" \
+                             "There were more than 10 results. " \
+                             "Use /all to download a list of the first max. " \
+                             "100 results."
+                    last_search_query[chat_id] = (text, datetime.now())
+
+                del state[chat_id]
+                track(update, 'search')
 
         elif isinstance(chat_state, list):  # Additional info
             text = update.message.text
@@ -383,7 +391,7 @@ def cancel(bot, update):
 
 def search(bot, update):
     global state
-    state[update.message.chat_id] = SEARCH
+    state[update.message.chat_id] = (SEARCH, datetime.now())
     bot.sendMessage(update.message.chat_id,
                     text="Enter search query:",
                     reply_markup=ForceReply(selective=True),
@@ -432,20 +440,20 @@ def download_db(bot, update):
 
 
 # Add all handlers to the dispatcher and run the bot
-dp.addTelegramCommandHandler('start', help)
-dp.addTelegramCommandHandler('help', help)
-dp.addTelegramCommandHandler('add_admin', add_admin)
-dp.addTelegramCommandHandler('remove_admin', remove_admin)
-dp.addTelegramCommandHandler('new', add_scammer)
-dp.addTelegramCommandHandler('edit', edit_scammer)
-dp.addTelegramCommandHandler('delete', remove_scammer)
-dp.addTelegramCommandHandler('search', search)
-dp.addTelegramCommandHandler('all', download_all)
-dp.addTelegramCommandHandler('download_database', download_db)
-dp.addTelegramCommandHandler('cancel', cancel)
-dp.addTelegramRegexHandler(r'^/confirm_(?P<scammer>\d+)(@.*)?$',
-                           confirm_scammer)
-dp.addTelegramMessageHandler(message_handler)
+dp.addHandler(CommandHandler('start', help))
+dp.addHandler(CommandHandler('help', help))
+dp.addHandler(CommandHandler('add_admin', add_admin))
+dp.addHandler(CommandHandler('remove_admin', remove_admin))
+dp.addHandler(CommandHandler('new', add_scammer))
+dp.addHandler(CommandHandler('edit', edit_scammer))
+dp.addHandler(CommandHandler('delete', remove_scammer))
+dp.addHandler(CommandHandler('search', search))
+dp.addHandler(CommandHandler('all', download_all))
+dp.addHandler(CommandHandler('download_database', download_db))
+dp.addHandler(CommandHandler('cancel', cancel))
+dp.addHandler(RegexHandler(r'^/confirm_(?P<scammer>\d+)(@.*)?$',
+                           confirm_scammer, pass_groupdict=True))
+dp.addHandler(MessageHandler([Filters.text], message_handler))
 dp.addErrorHandler(error)
 
 start_bot(u)
