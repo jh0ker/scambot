@@ -10,6 +10,7 @@ class Scammer(db.Entity):
     account_nr = Optional(str)
     bank_name = Optional(str)
     remark = Optional(str)
+    attached_file = Optional(str)
     reported_by = Set("Reporter")
     added_by = Required("Admin")
     created = Required(datetime.datetime, default=datetime.datetime.now)
