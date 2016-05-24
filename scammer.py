@@ -40,6 +40,7 @@ class Scammer(db.Entity):
             "Admin remark: {remark}\n" \
             "Reported by: {reported_by}\n" \
             "Added by: {added_by}\n" \
+            "Attachment: /attachment_{id}\n" \
             "Confirm report: /confirm_{id}".format(
                 **{k: escape_html(str(v)) for (k, v) in params.items()}
             )

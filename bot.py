@@ -20,10 +20,12 @@ from reporter import Reporter
 
 # States the bot can have (maintained per chat id)
 MAIN, ADD_SCAMMER, REMOVE_SCAMMER, ADD_ADMIN, REMOVE_ADMIN, PHONE_NR,\
-    ACCOUNT_NR, BANK_NAME, REMARK, SEARCH, ADD_INFO, EDIT = range(12)
+    ACCOUNT_NR, BANK_NAME, REMARK, SEARCH, ADD_INFO, EDIT, ATTACHMENT =\
+    range(13)
 
 options = {PHONE_NR: "Phone number", ACCOUNT_NR: "Account number",
-           BANK_NAME: "Name of bank account owner", REMARK: "Admin remark"}
+           BANK_NAME: "Name of bank account owner", REMARK: "Admin remark",
+           ATTACHMENT: "Attachment"}
 
 # Enable reverse lookup
 for k, v in list(options.items()):
@@ -33,6 +35,7 @@ _grid = [[options[ACCOUNT_NR]],
          [options[BANK_NAME]],
          [options[PHONE_NR]],
          [options[REMARK]],
+         [options[ATTACHMENT]],
          ['/cancel']]
 
 CAT_KEYBOARD = ReplyKeyboardMarkup(_grid, selective=True)
@@ -253,20 +256,40 @@ def message_handler(bot, update):
                 option = options[text]
                 chat_state.append(option)
                 state[chat_id] = chat_state
-                reply = "Please enter " + update.message.text
+
+                if option != ATTACHMENT:
+                    reply = "Please enter " + update.message.text
+                else:
+                    reply = "Please send a photo or file to attach to this " \
+                            "report"
+
                 reply_markup = ForceReply(selective=True)
+
             elif chat_state[0] is ADD_INFO:
                     scammer = Scammer.get(id=chat_state[1])
                     text = update.message.text
                     category = chat_state[2]
-                    if category is PHONE_NR:
+
+                    if category is PHONE_NR and text:
                         scammer.phone_nr = text
-                    elif category is ACCOUNT_NR:
+
+                    elif category is ACCOUNT_NR and text:
                         scammer.account_nr = text
-                    elif category is BANK_NAME:
+
+                    elif category is BANK_NAME and text:
                         scammer.bank_name = text
-                    elif category is REMARK:
+
+                    elif category is REMARK and text:
                         scammer.remark = text
+
+                    elif category is ATTACHMENT:
+                        if update.message.photo:
+                            scammer.attached_file =\
+                                'photo:' + update.message.photo[-1].file_id
+                        elif update.message.document:
+                            scammer.attached_file =\
+                                'document:' + update.message.document.file_id
+
                     chat_state.pop()  # one menu back
                     state[chat_id] = chat_state
                     reply_markup = CAT_KEYBOARD
@@ -351,6 +374,34 @@ def confirm_scammer(bot, update, groupdict):
 
     bot.sendMessage(chat_id, text=reply,
                     reply_to_message_id=update.message.message_id)
+
+
+def get_attachment(bot, update, groupdict):
+    chat_id = update.message.chat_id
+    scammer_id = int(groupdict['scammer'])
+
+    with db_session:
+        scammer = Scammer.get(id=scammer_id)
+
+        if not scammer:
+            reply = "Report not found!"
+            bot.sendMessage(chat_id, text=reply,
+                            reply_to_message_id=update.message.message_id)
+
+        else:
+            kind, _, file_id = scammer.attached_file.partition(':')
+
+            if kind == 'photo':
+                bot.sendPhoto(chat_id, photo=file_id,
+                              reply_to_message_id=update.message.message_id)
+            elif kind == 'document':
+                bot.sendDocument(chat_id, document=file_id,
+                                 reply_to_message_id=update.message.message_id)
+
+            else:
+                bot.sendMessage(chat_id,
+                                text="There is no attachment for this report",
+                                reply_to_message_id=update.message.message_id)
 
 
 def add_admin(bot, update):
@@ -453,7 +504,10 @@ dp.addHandler(CommandHandler('download_database', download_db))
 dp.addHandler(CommandHandler('cancel', cancel))
 dp.addHandler(RegexHandler(r'^/confirm_(?P<scammer>\d+)(@.*)?$',
                            confirm_scammer, pass_groupdict=True))
-dp.addHandler(MessageHandler([Filters.text], message_handler))
+dp.addHandler(RegexHandler(r'^/attachment_(?P<scammer>\d+)(@.*)?$',
+                           get_attachment, pass_groupdict=True))
+dp.addHandler(MessageHandler([Filters.text, Filters.photo, Filters.document],
+                             message_handler))
 dp.addErrorHandler(error)
 
 start_bot(u)
