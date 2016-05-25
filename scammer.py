@@ -33,15 +33,15 @@ class Scammer(db.Entity):
             'added_by': self.added_by
         }
 
-        s = "<b>Report #{id}</b>\n" \
-            "Phone Nr.: {phone_nr}\n" \
-            "Bank Account Nr.: {account_nr}\n" \
-            "Bank Account Name: {bank_name}\n" \
-            "Admin remark: {remark}\n" \
-            "Reported by: {reported_by}\n" \
-            "Added by: {added_by}\n" \
-            "Attachment: /attachment_{id}\n" \
-            "Confirm report: /confirm_{id}".format(
+        s = ("<b>Report #{id}</b>\n"
+             "Phone Nr.: {phone_nr}\n"
+             "Bank Account Nr.: {account_nr}\n"
+             "Bank Account Name: {bank_name}\n"
+             "Admin remark: {remark}\n"
+             "Reported by: {reported_by}\n"
+             "Added by: {added_by}\n" +
+             ("Attachment: /attachment_{id}\n" if self.attached_file else '') +
+             "Confirm report: /confirm_{id}").format(
                 **{k: escape_html(str(v)) for (k, v) in params.items()}
             )
 
