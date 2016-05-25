@@ -218,7 +218,9 @@ def message_handler(bot, update):
 
             del state[chat_id]
 
-        elif isinstance(chat_state, tuple) and chat_state[0] is SEARCH:
+        elif (isinstance(chat_state, tuple) and
+              chat_state[0] is SEARCH and
+              update.message.text):
 
             issued = chat_state[1]
             if (datetime.now() - issued).seconds > 30:
