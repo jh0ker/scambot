@@ -39,9 +39,7 @@ class Scammer(db.Entity):
              "Bank Account Name: {bank_name}\n"
              "Admin remark: {remark}\n"
              "Reported by: {reported_by}\n"
-             "Added by: {added_by}\n" +
-             ("Attachment: /attachment_{id}\n" if self.attached_file else '') +
-             "Confirm report: /confirm_{id}").format(
+             "Added by: {added_by}").format(
                 **{k: escape_html(str(v)) for (k, v) in params.items()}
             )
 

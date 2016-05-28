@@ -3,12 +3,12 @@ from datetime import datetime
 from io import BytesIO, BufferedReader
 
 from telegram.ext import Updater, CommandHandler, RegexHandler, \
-    MessageHandler, Filters
+    MessageHandler, Filters, CallbackQueryHandler
 from telegram.ext.dispatcher import run_async
 from telegram import ParseMode, ReplyKeyboardMarkup, ReplyKeyboardHide, \
-    ChatAction, ForceReply
+    ChatAction, ForceReply, InlineKeyboardMarkup, InlineKeyboardButton, Emoji
 from telegram.utils.botan import Botan
-from pony.orm import db_session, select
+from pony.orm import db_session, select, desc
 
 from credentials import TOKEN, BOTAN_TOKEN
 from start_bot import start_bot
@@ -42,7 +42,6 @@ CAT_KEYBOARD = ReplyKeyboardMarkup(_grid, selective=True)
 DB_NAME = 'bot.sqlite'
 
 state = dict()
-last_search_query = dict()
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -228,25 +227,31 @@ def message_handler(bot, update):
                 del state[chat_id]
 
             else:
-                text = update.message.text
-                scammers = select(s for s in Scammer if
-                                  text in s.phone_nr or
-                                  text in s.account_nr or
-                                  text in s.bank_name or
-                                  text in s.remark).limit(11)
+                text = update.message.text.replace('%', '')
+
+                scammers = select(
+                    s for s in Scammer if
+                    text in s.phone_nr or
+                    text in s.account_nr or
+                    text in s.bank_name or
+                    text in s.remark
+                ).order_by(
+                    desc(Scammer.created)
+                )[0:1]
 
                 if scammers:
-                    reply = "Search results: \n\n" + \
-                            "\n\n".join(str(s) for s in scammers[:10])
+                    scammer = scammers[0]
+                    reply = str(scammer)
+                    reporter = get_reporter(update.message.from_user)
+
+                    kb = search_keyboard(offset=0,
+                                         show_download=True,
+                                         disabled_attachments=[],
+                                         confirmed=reporter and reporter in scammer.reported_by,
+                                         query=text)
+                    reply_markup = InlineKeyboardMarkup(kb)
                 else:
                     reply = "No search results"
-
-                if len(scammers) > 10:
-                    reply += "\n\n" \
-                             "There were more than 10 results. " \
-                             "Use /all to download a list of the first max. " \
-                             "100 results."
-                    last_search_query[chat_id] = (text, datetime.now())
 
                 del state[chat_id]
                 track(update, 'search')
@@ -350,62 +355,6 @@ def edit_scammer(bot, update):
                     reply_to_message_id=update.message.message_id)
 
 
-def confirm_scammer(bot, update, groupdict):
-    chat_id = update.message.chat_id
-    scammer_id = int(groupdict['scammer'])
-    from_user = update.message.from_user
-
-    with db_session:
-        scammer = Scammer.get(id=scammer_id)
-
-        if not scammer:
-            reply = "Report not found!"
-
-        else:
-            reporter = get_reporter(from_user)
-
-            if not reporter:
-                reporter = Reporter(id=from_user.id,
-                                    first_name=from_user.first_name,
-                                    last_name=from_user.last_name,
-                                    username=from_user.username)
-                track(update, 'new_reporter')
-
-            scammer.reported_by.add(reporter)
-            reply = "Report confirmed!"
-
-    bot.sendMessage(chat_id, text=reply,
-                    reply_to_message_id=update.message.message_id)
-
-
-def get_attachment(bot, update, groupdict):
-    chat_id = update.message.chat_id
-    scammer_id = int(groupdict['scammer'])
-
-    with db_session:
-        scammer = Scammer.get(id=scammer_id)
-
-        if not scammer:
-            reply = "Report not found!"
-            bot.sendMessage(chat_id, text=reply,
-                            reply_to_message_id=update.message.message_id)
-
-        else:
-            kind, _, file_id = scammer.attached_file.partition(':')
-
-            if kind == 'photo':
-                bot.sendPhoto(chat_id, photo=file_id,
-                              reply_to_message_id=update.message.message_id)
-            elif kind == 'document':
-                bot.sendDocument(chat_id, document=file_id,
-                                 reply_to_message_id=update.message.message_id)
-
-            else:
-                bot.sendMessage(chat_id,
-                                text="There is no attachment for this report",
-                                reply_to_message_id=update.message.message_id)
-
-
 def add_admin(bot, update):
     global state
     with db_session:
@@ -451,19 +400,110 @@ def search(bot, update):
                     reply_to_message_id=update.message.message_id)
 
 
-def download_all(bot, update):
-    global last_search_query
-    chat_id = update.message.chat_id
-    query_tuple = last_search_query.get(update.message.chat_id, None)
-    if not query_tuple:
-        bot.sendMessage(update.message.chat_id,
-                        text="Sorry, results are only preserved for 15 "
-                             "minutes. Please use /search to start a new "
-                             "search.",
-                             reply_to_message_id=update.message.message_id)
-    else:
+@db_session
+def callback_query(bot, update):
+    cb = update.callback_query
+    chat_id = cb.message.chat_id
+
+    data = update.callback_query.data
+
+    logger.info(data)
+
+    data = data.split('%')
+
+    action = ''
+    offset = 0
+    disabled_attachments = set()
+    query = ''
+    confirmed = False
+    show_download = True
+
+    for elem in data:
+        name, *args = elem.split('=')
+
+        if name == 'act':
+            action = args[0]
+        elif name == 'off':
+            offset = int(args[0])
+        elif name == 'noatt':
+            disabled_attachments = set(int(arg) for arg in args if arg != '')
+        elif name == 'qry':
+            query = '='.join(args)
+        elif name == 'cnf':
+            confirmed = bool(int(args[0]))
+        elif name == 'dl':
+            show_download = bool(int(args[0]))
+
+    reporter = get_reporter(cb.from_user)
+
+    if action == 'old':
+        offset += 1
+    elif action == 'new':
+        offset -= 1
+
+    try:
+        scammers = select(
+            s for s in Scammer if
+            query in s.phone_nr or
+            query in s.account_nr or
+            query in s.bank_name or
+            query in s.remark
+        ).order_by(
+            desc(Scammer.created)
+        )[offset:offset + 1]
+
+    except TypeError:
+        scammers = None
+
+    reply = None
+
+    if action in ('old', 'new'):
+        if scammers:
+            scammer = scammers[0]
+            reply = str(scammer)
+
+            if not scammer.attached_file:
+                disabled_attachments.add(offset)
+
+            confirmed = reporter and reporter in scammer.reported_by
+
+        else:
+            bot.answerCallbackQuery(callback_query_id=cb.id, text="No more results")
+
+    elif action == 'confirm':
+        scammer = scammers[0]
+        if not confirmed:
+            if not reporter:
+                reporter = Reporter(id=cb.from_user.id,
+                                    first_name=cb.from_user.first_name,
+                                    last_name=cb.from_user.last_name,
+                                    username=cb.from_user.username)
+                track(update, 'new_reporter')
+
+            scammer.reported_by.add(reporter)
+            bot.answerCallbackQuery(callback_query_id=cb.id, text="You confirmed this report.")
+        else:
+            scammer.reported_by.remove(reporter)
+            bot.answerCallbackQuery(callback_query_id=cb.id, text="You removed your confirmation.")
+
+        confirmed = not confirmed
+        reply = str(scammer)
+
+    elif action == 'att':
+        kind, _, file_id = scammers[0].attached_file.partition(':')
+
+        if kind == 'photo':
+            bot.sendPhoto(chat_id, photo=file_id,
+                          reply_to_message_id=cb.message.message_id)
+        elif kind == 'document':
+            bot.sendDocument(chat_id, document=file_id,
+                             reply_to_message_id=cb.message.message_id)
+
+        disabled_attachments.add(offset)
+
+    elif action == 'dl':
         bot.sendChatAction(chat_id, action=ChatAction.UPLOAD_DOCUMENT)
-        query = query_tuple[0]
+
         with db_session:
             scammers = select(s for s in Scammer if
                               query in s.phone_nr or
@@ -474,9 +514,74 @@ def download_all(bot, update):
             content = "\r\n\r\n".join(str(s) for s in scammers)
 
         file = BytesIO(content.encode())
+        show_download = False
+
         bot.sendDocument(chat_id, document=BufferedReader(file),
                          filename='search.txt',
-                         reply_to_message_id=update.message.message_id)
+                         reply_to_message_id=update.callback_query.message.message_id)
+
+    kb = search_keyboard(offset=offset, show_download=show_download,
+                         disabled_attachments=disabled_attachments, confirmed=confirmed,
+                         query=query)
+
+    reply_markup = InlineKeyboardMarkup(kb)
+
+    if reply:
+        bot.editMessageText(chat_id=chat_id, message_id=cb.message.message_id, text=reply,
+                            reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    else:
+        bot.editMessageReplyMarkup(chat_id=chat_id,
+                                   message_id=update.callback_query.message.message_id,
+                                   reply_markup=reply_markup)
+
+
+def search_keyboard(offset, show_download, disabled_attachments, confirmed, query):
+    data = list()
+
+    data.append('dl=' + str(int(show_download)))
+
+    data.append('noatt=' + '='.join(str(da) for da in disabled_attachments))
+
+    data.append('cnf=' + str(int(confirmed)))
+
+    data.append('off=' + str(int(offset)))
+
+    data.append('qry=' + query)
+
+    data = '%'.join(data)
+
+    kb = [[
+        InlineKeyboardButton(
+            text=Emoji.BLACK_LEFT_POINTING_TRIANGLE + ' Newer',
+            callback_data='act=new%' + data
+        ),
+        InlineKeyboardButton(
+            text=(Emoji.THUMBS_UP_SIGN + ' Confirm') if not confirmed else
+            (Emoji.THUMBS_DOWN_SIGN + ' Unconfirm'),
+            callback_data='act=confirm%' + data
+        ),
+        InlineKeyboardButton(
+            text='Older ' + Emoji.BLACK_RIGHT_POINTING_TRIANGLE,
+            callback_data='act=old%' + data
+        ),
+    ], list()]
+
+    if offset not in disabled_attachments:
+        kb[1].append(
+            InlineKeyboardButton(
+                text=Emoji.FLOPPY_DISK + ' Attachment',
+                callback_data='act=att%' + data
+            )
+        )
+
+    if show_download:
+        kb[1].append(
+            InlineKeyboardButton(
+                text=Emoji.BLACK_DOWN_POINTING_DOUBLE_TRIANGLE + ' Download all',
+                callback_data='act=dl%' + data
+            )
+        )
+    return kb
 
 
 def download_db(bot, update):
@@ -501,13 +606,9 @@ dp.addHandler(CommandHandler('new', add_scammer))
 dp.addHandler(CommandHandler('edit', edit_scammer))
 dp.addHandler(CommandHandler('delete', remove_scammer))
 dp.addHandler(CommandHandler('search', search))
-dp.addHandler(CommandHandler('all', download_all))
+dp.addHandler(CallbackQueryHandler(callback_query))
 dp.addHandler(CommandHandler('download_database', download_db))
 dp.addHandler(CommandHandler('cancel', cancel))
-dp.addHandler(RegexHandler(r'^/confirm_(?P<scammer>\d+)(@.*)?$',
-                           confirm_scammer, pass_groupdict=True))
-dp.addHandler(RegexHandler(r'^/attachment_(?P<scammer>\d+)(@.*)?$',
-                           get_attachment, pass_groupdict=True))
 dp.addHandler(MessageHandler([Filters.text, Filters.photo, Filters.document],
                              message_handler))
 dp.addErrorHandler(error)
