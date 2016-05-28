@@ -437,9 +437,11 @@ def callback_query(bot, update):
     reporter = get_reporter(cb.from_user)
 
     if action == 'old':
-        new_offset = offset +  1
+        new_offset = offset + 1
     elif action == 'new':
         new_offset = offset - 1
+    else:
+        new_offset = offset
 
     try:
         scammers = select(
@@ -472,8 +474,13 @@ def callback_query(bot, update):
 
         else:
             bot.answerCallbackQuery(callback_query_id=cb.id, text="No more results")
+            return
 
     elif action == 'confirm':
+        if not scammers:
+            bot.answerCallbackQuery(callback_query_id=cb.id, text="Not found, please search again")
+            return
+
         scammer = scammers[0]
         if not confirmed:
             if not reporter:
@@ -493,6 +500,10 @@ def callback_query(bot, update):
         reply = str(scammer)
 
     elif action == 'att':
+        if not scammers:
+            bot.answerCallbackQuery(callback_query_id=cb.id, text="Not found, please search again")
+            return
+
         kind, _, file_id = scammers[0].attached_file.partition(':')
 
         if kind == 'photo':
