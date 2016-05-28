@@ -437,9 +437,9 @@ def callback_query(bot, update):
     reporter = get_reporter(cb.from_user)
 
     if action == 'old':
-        offset += 1
+        new_offset = offset +  1
     elif action == 'new':
-        offset -= 1
+        new_offset = offset - 1
 
     try:
         scammers = select(
@@ -450,10 +450,13 @@ def callback_query(bot, update):
             query in s.remark
         ).order_by(
             desc(Scammer.created)
-        )[offset:offset + 1]
+        )[new_offset:new_offset + 1]
 
     except TypeError:
         scammers = None
+
+    else:
+        offset = new_offset
 
     reply = None
 
