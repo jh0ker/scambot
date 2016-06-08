@@ -45,7 +45,7 @@ state = dict()
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG)
+    level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 u = Updater(TOKEN)
@@ -247,7 +247,9 @@ def message_handler(bot, update):
                     kb = search_keyboard(offset=0,
                                          show_download=True,
                                          disabled_attachments=[],
-                                         confirmed=reporter and reporter in scammer.reported_by,
+                                         confirmed=reporter in scammer.reported_by
+                                         if reporter
+                                         else False,
                                          query=text)
                     reply_markup = InlineKeyboardMarkup(kb)
                 else:
@@ -470,7 +472,7 @@ def callback_query(bot, update):
             if not scammer.attached_file:
                 disabled_attachments.add(offset)
 
-            confirmed = reporter and reporter in scammer.reported_by
+            confirmed = reporter in scammer.reported_by if reporter else False
 
         else:
             bot.answerCallbackQuery(callback_query_id=cb.id, text="No more results")
